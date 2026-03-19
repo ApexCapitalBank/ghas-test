@@ -1,37 +1,44 @@
-# Create a file named 'vulnerable.py' with multiple security issues
-content = """
 import os
 import sqlite3
 import base64
+from flask import Flask, request, make_response
 
-# 1. Hardcoded password/secret
-API_KEY = "sk-1234567890abcdef1234567890abcdef"
+app = Flask(__name__)
 
-# 2. SQL Injection
-def get_user_data(user_id):
+@app.route('/test')
+def test_vulns():
+    # 1. OS Command Injection (Critical)
+    # Source: request.args -> Sink: os.system
+    cmd = request.args.get('cmd')
+    os.system(f"echo {cmd}")
+
+    # 2. SQL Injection (Critical)
+    # Source: request.args -> Sink: cursor.execute
+    user_id = request.args.get('id')
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
-    # Unsafe: Direct string formatting into a query
-    query = "SELECT * FROM users WHERE id = '%s'" % user_id
-    cursor.execute(query)
-    return cursor.fetchone()
+    cursor.execute(f"SELECT * FROM users WHERE id = '{user_id}'")
 
-# 3. OS Command Injection
-def ping_host(host):
-    # Unsafe: User input directly in a system shell command
-    os.system("ping -c 1 " + host)
+    # 3. Reflected Cross-Site Scripting (XSS) (High)
+    # Source: request.args -> Sink: make_response
+    name = request.args.get('name')
+    return make_response(f"<h1>Hello {name}</h1>")
 
-# 4. Insecure Cryptography (Base64 is not encryption)
-def store_secret(secret):
-    encoded = base64.b64encode(secret.encode())
-    print(f"Stored 'encrypted' secret: {encoded}")
+@app.route('/danger')
+def more_danger():
+    # 4. Unsafe Deserialization (Critical)
+    # Source: request.args -> Sink: eval
+    data = request.args.get('data')
+    result = eval(data)
 
-# 5. Use of unsafe 'eval'
-def calculate(expression):
-    return eval(expression)
-"""
+    # 5. Path Traversal (High)
+    # Source: request.args -> Sink: open
+    filename = request.args.get('file')
+    with open(f"/var/www/html/{filename}", "r") as f:
+        return f.read()
 
-with open("vulnerable.py", "w") as f:
-    f.write(content.strip())
+# 6. Hardcoded Secret (Medium/High) - Scanned automatically
+INTERNAL_TOKEN = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"
 
-print("Successfully generated 'vulnerable.py' with 5 security flaws.")
+if __name__ == "__main__":
+    app.run()
