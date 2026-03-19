@@ -1,0 +1,53 @@
+name: "Scan and Extract SARIF"
+on: [push, workflow_dispatch]
+
+jobs:
+  analyze-and-export:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: Perform Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: Fetch and Display SARIF
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 1. Get the ID of the most recent analysis
+          echo "Finding latest analysis ID..."
+          ANALYSIS_ID=$(gh api /repos/${{ github.repository }}/code-scanning/analyses \
+            --jq '.[0].id')
+          
+          if [ -z "$ANALYSIS_ID" ]; then
+            echo "No analysis found. Ensure the 'Perform Analysis' step succeeded."
+            exit 1
+          fi
+
+          # 2. Extract SARIF to file
+          echo "Exporting Analysis ID: $ANALYSIS_ID to results.sarif"
+          gh api /repos/${{ github.repository }}/code-scanning/analyses/$ANALYSIS_ID \
+            -H "Accept: application/sarif+json" > results.sarif
+
+          # 3. Print content to console (STDOUT) for visibility
+          echo "--- START SARIF CONTENT ---"
+          cat results.sarif
+          echo "--- END SARIF CONTENT ---"
+            
+      - name: Upload SARIF Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sarif-results
+          path: results.sarif
+          if-no-files-found: error
