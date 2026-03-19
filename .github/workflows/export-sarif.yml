@@ -2,7 +2,7 @@ name: "Scan and Extract SARIF"
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 env:
@@ -20,6 +20,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install flask pyyaml lxml requests
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -28,48 +36,24 @@ jobs:
 
       - name: Perform Analysis
         uses: github/codeql-action/analyze@v4
+        with:
+          output: sarif-results
 
-      - name: Export SARIF File
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify Results
         run: |
-          echo "Waiting for GitHub API to sync..."
-          sleep 30
-          
-          # Refined JQ: Find any analysis where category contains 'python'
-          # We take the [0] index to ensure we get the absolute latest one
-          ANALYSIS_ID=$(gh api /repos/${{ github.repository }}/code-scanning/analyses \
-            --jq '[.[] | select(.category | contains("python"))] | .[0].id')
-          
-          if [ -z "$ANALYSIS_ID" ] || [ "$ANALYSIS_ID" == "null" ]; then
-             echo "Python-specific analysis not found. Falling back to the latest global analysis ID..."
-             ANALYSIS_ID=$(gh api /repos/${{ github.repository }}/code-scanning/analyses --jq '.[0].id')
-          fi
+          SARIF_FILE=$(ls sarif-results/*.sarif | head -1)
+          echo "SARIF file: $SARIF_FILE"
 
-          if [ -z "$ANALYSIS_ID" ] || [ "$ANALYSIS_ID" == "null" ]; then
-             echo "Error: No analyses found at all for this repository."
-             exit 1
-          fi
+          COUNT=$(jq '[.runs[].results[]] | length' "$SARIF_FILE")
+          echo "✅ FOUND: $COUNT vulnerabilities detected."
 
-          echo "Exporting Analysis ID: $ANALYSIS_ID"
-          gh api /repos/${{ github.repository }}/code-scanning/analyses/$ANALYSIS_ID \
-            -H "Accept: application/sarif+json" > results.sarif
-
-      - name: Verify and Log Results
-        run: |
-          echo "--- ANALYSIS RESULTS OVERVIEW ---"
-          # Check if the results array exists and count it
-          COUNT=$(jq '[.runs[].results[]] | length' results.sarif)
-          
-          echo "✅ FOUND: $COUNT vulnerabilities detected in SARIF output."
-          
           if [ "$COUNT" -gt "0" ]; then
-            echo "--- LIST OF RULES TRIGGERED ---"
-            jq -r '.runs[].results[].ruleId' results.sarif | sort | uniq -c
+            echo "--- RULES TRIGGERED ---"
+            jq -r '.runs[].results[].ruleId' "$SARIF_FILE" | sort | uniq -c | sort -rn
           fi
-            
+
       - name: Upload SARIF Artifact
         uses: actions/upload-artifact@v4
         with:
           name: python-scan-results
-          path: results.sarif
+          path: sarif-results/*.sarif
