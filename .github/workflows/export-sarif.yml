@@ -5,12 +5,11 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-# Future-proof for Node.js 24 transition
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  analyze-and-export:
+  analyze:
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -25,36 +24,48 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: python
+          # Using 'security-and-quality' ensures more results are found
+          queries: security-and-quality
 
       - name: Perform Analysis
         uses: github/codeql-action/analyze@v4
 
-      - name: Fetch and Display Python SARIF
+      - name: Export SARIF File
+        id: export
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Waiting for GitHub to index results..."
-          sleep 20
+          echo "Waiting for indexing..."
+          sleep 25
           
-          # This specifically selects the 'language:python' scan category
+          # Fetch the latest Python analysis ID
           ANALYSIS_ID=$(gh api /repos/${{ github.repository }}/code-scanning/analyses \
-            --jq 'map(select(.category == "/language:python" or .category == "language:python")) | .[0].id')
+            --jq 'map(select(.category == "language:python")) | .[0].id')
           
           if [ -z "$ANALYSIS_ID" ] || [ "$ANALYSIS_ID" == "null" ]; then
-            echo "Python-specific analysis not found. Trying latest overall..."
-            ANALYSIS_ID=$(gh api /repos/${{ github.repository }}/code-scanning/analyses --jq '.[0].id')
+             echo "Error: No Python analysis found."
+             exit 1
           fi
 
           echo "Exporting Analysis ID: $ANALYSIS_ID"
-
           gh api /repos/${{ github.repository }}/code-scanning/analyses/$ANALYSIS_ID \
             -H "Accept: application/sarif+json" > results.sarif
 
-          echo "--- SUMMARY OF VULNERABILITIES ---"
-          # Only print the rule IDs to keep logs clean
-          jq -r '.runs[].results[].ruleId' results.sarif | sort | uniq -c || echo "No findings."
+      - name: Verify and Log Results
+        run: |
+          echo "--- ANALYSIS RESULTS OVERVIEW ---"
+          COUNT=$(jq '.runs[].results | length' results.sarif)
           
-          echo "--- RAW CONTENT PREVIEW (Top 50 lines) ---"
+          if [ "$COUNT" -eq "0" ]; then
+            echo "❌ SUCCESS: Scan finished but 0 vulnerabilities were found."
+            echo "Tip: Ensure 'vulnerable.py' uses Flask-style requests to trigger data-flow alerts."
+          else
+            echo "✅ FOUND: $COUNT vulnerabilities detected in SARIF output."
+            echo "--- LIST OF RULES TRIGGERED ---"
+            jq -r '.runs[].results[].ruleId' results.sarif | sort | uniq -c
+          fi
+          
+          echo "--- RAW PREVIEW ---"
           head -n 50 results.sarif
             
       - name: Upload SARIF Artifact
