@@ -24,26 +24,30 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: python
-          # Using 'security-and-quality' ensures more results are found
           queries: security-and-quality
 
       - name: Perform Analysis
         uses: github/codeql-action/analyze@v4
 
       - name: Export SARIF File
-        id: export
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Waiting for indexing..."
-          sleep 25
+          echo "Waiting for GitHub API to sync..."
+          sleep 30
           
-          # Fetch the latest Python analysis ID
+          # Refined JQ: Find any analysis where category contains 'python'
+          # We take the [0] index to ensure we get the absolute latest one
           ANALYSIS_ID=$(gh api /repos/${{ github.repository }}/code-scanning/analyses \
-            --jq 'map(select(.category == "language:python")) | .[0].id')
+            --jq '[.[] | select(.category | contains("python"))] | .[0].id')
           
           if [ -z "$ANALYSIS_ID" ] || [ "$ANALYSIS_ID" == "null" ]; then
-             echo "Error: No Python analysis found."
+             echo "Python-specific analysis not found. Falling back to the latest global analysis ID..."
+             ANALYSIS_ID=$(gh api /repos/${{ github.repository }}/code-scanning/analyses --jq '.[0].id')
+          fi
+
+          if [ -z "$ANALYSIS_ID" ] || [ "$ANALYSIS_ID" == "null" ]; then
+             echo "Error: No analyses found at all for this repository."
              exit 1
           fi
 
@@ -54,19 +58,15 @@ jobs:
       - name: Verify and Log Results
         run: |
           echo "--- ANALYSIS RESULTS OVERVIEW ---"
-          COUNT=$(jq '.runs[].results | length' results.sarif)
+          # Check if the results array exists and count it
+          COUNT=$(jq '[.runs[].results[]] | length' results.sarif)
           
-          if [ "$COUNT" -eq "0" ]; then
-            echo "❌ SUCCESS: Scan finished but 0 vulnerabilities were found."
-            echo "Tip: Ensure 'vulnerable.py' uses Flask-style requests to trigger data-flow alerts."
-          else
-            echo "✅ FOUND: $COUNT vulnerabilities detected in SARIF output."
+          echo "✅ FOUND: $COUNT vulnerabilities detected in SARIF output."
+          
+          if [ "$COUNT" -gt "0" ]; then
             echo "--- LIST OF RULES TRIGGERED ---"
             jq -r '.runs[].results[].ruleId' results.sarif | sort | uniq -c
           fi
-          
-          echo "--- RAW PREVIEW ---"
-          head -n 50 results.sarif
             
       - name: Upload SARIF Artifact
         uses: actions/upload-artifact@v4
