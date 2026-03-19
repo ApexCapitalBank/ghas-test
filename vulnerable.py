@@ -165,14 +165,12 @@ def register():
 
     conn = sqlite3.connect("users.db")
     cursor = conn.cursor()
-    # Storing password and SSN in cleartext
     cursor.execute(
-        "INSERT INTO users (username, password, ssn) VALUES ('" 
+        "INSERT INTO users (username, password, ssn) VALUES ('"
         + username + "', '" + password + "', '" + ssn + "')"
     )
     conn.commit()
 
-    # Also logging sensitive data
     with open("app.log", "a") as log:
         log.write(f"New user registered: {username}, password: {password}, SSN: {ssn}\n")
 
@@ -347,7 +345,7 @@ def parse_document():
     return etree.tostring(doc).decode()
 
 
-# Multiple additional SQL injections for good measure
+# Multiple additional SQL injections
 @app.route("/api/products")
 def get_products():
     category = request.args.get("category")
